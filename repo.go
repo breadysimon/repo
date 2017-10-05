@@ -115,20 +115,24 @@ func (o *Repo) getFolderID(path string) int64 {
 	return n
 
 }
-
-func (o *Repo) copyFile(path string, repo string) {
+func (o *Repo) getRepoPath(hash string) string {
+	repoBase, _ := filepath.Abs("e:/repo")
+	distDir := filepath.Join(repoBase, hash[:1], hash[1:2])
+	_, err := os.Stat(distDir)
+	if os.IsNotExist(err) {
+		os.MkdirAll(distDir, 0666)
+	}
+	return filepath.Join(distDir, hash)
+}
+func (o *Repo) copyFile(path string, hash string) {
 	o.connectDB()
 	var refcount int64
-	err := o.db.QueryRow("SELECT refcount FROM repo WHERE id=?", repo).Scan(&refcount)
+	err := o.db.QueryRow("SELECT refcount FROM repo WHERE id=?", hash).Scan(&refcount)
 	if err == sql.ErrNoRows {
-		repoBase, _ := filepath.Abs("e:/repo")
-		distDir := filepath.Join(repoBase, repo[:1], repo[1:2])
-		_, err := os.Stat(distDir)
-		if os.IsNotExist(err) {
-			os.MkdirAll(distDir, 0666)
-		}
+		log.Printf("copy new file:%s,hash=%s", path, hash)
+
 		srcFile := path
-		distFile := filepath.Join(distDir, repo)
+		distFile := o.getRepoPath(hash)
 		src, err := os.Open(srcFile)
 		if err != nil {
 			log.Fatal(err)
@@ -143,14 +147,15 @@ func (o *Repo) copyFile(path string, repo string) {
 
 		stmt, err := o.db.Prepare("INSERT INTO repo(id,refcount) VALUES(?,?)")
 		MustOK(err)
-		_, err = stmt.Exec(repo, 1)
+		_, err = stmt.Exec(hash, 1)
 		MustOK(err)
 
 	} else {
 		MustOK(err)
+		log.Printf("add refcount to %d, hash=%s", refcount+1, hash)
 		stmt, err := o.db.Prepare("UPDATE repo SET refcount=? WHERE id=?")
 		MustOK(err)
-		_, err = stmt.Exec(refcount+1, repo)
+		_, err = stmt.Exec(refcount+1, hash)
 		MustOK(err)
 	}
 }
@@ -170,30 +175,52 @@ func (o *Repo) Exit() {
 		o.db.Close()
 	}
 }
+func (o *Repo) decRef(hash string) {
+	o.connectDB()
+	var n int64
+	MustOK(o.db.QueryRow("SELECT refcount from repo WHERE id=?", hash).Scan(&n))
+	n--
+	if n > 0 {
+		log.Printf("decrease refcount to %d, id=%s", n, hash)
+		stmt, err := o.db.Prepare("UPDATE repo SET refcount=? WHERE id=?")
+		MustOK(err)
+		_, err = stmt.Exec(n, hash)
+		MustOK(err)
+	} else {
+		log.Printf("remove old copy(ref=0): %s", hash)
+		stmt, err := o.db.Prepare("DELETE FROM repo WHERE id=?")
+		MustOK(err)
+		_, err = stmt.Exec(hash)
+		MustOK(err)
+		err = os.Remove(o.getRepoPath(hash))
+		if err != nil {
+			log.Print(err)
+			fmt.Printf("fail to remove:%s\n", o.getRepoPath(hash))
+		}
+	}
+}
 func (o *Repo) addFile(fullpath string, hash string, f os.FileInfo, relPath string, parentID int64) {
 	o.connectDB()
 	var n int64
-	err := o.db.QueryRow("SELECT id from files WHERE fullpath=?", fullpath).Scan(&n)
+	var oldhash string
+	err := o.db.QueryRow("SELECT id,md5 from files WHERE name=? AND folder=?", f.Name(), relPath).Scan(&n, &oldhash)
 	if err == sql.ErrNoRows {
 		stmt, err := o.db.Prepare("INSERT INTO files(md5,size,fullpath,name,modtime,folder,folderid) VALUES(?,?,?,?,?,?,?)")
-		if err != nil {
-			log.Fatal(err)
-		}
+		MustOK(err)
 		_, err = stmt.Exec(hash, f.Size(), fullpath, f.Name(), f.ModTime().Format("20060102150405"), relPath, parentID)
-		if err != nil {
-			log.Fatal(err)
-		}
+		MustOK(err)
+		o.copyFile(fullpath, hash)
 	} else {
-		if err != nil {
-			log.Fatal(err)
-		}
-		stmt, err := o.db.Prepare("UPDATE files SET md5=?,size=?,modtime=? WHERE id=?")
-		if err != nil {
-			log.Fatal(err)
-		}
-		_, err = stmt.Exec(hash, f.Size(), f.ModTime(), n)
-		if err != nil {
-			log.Fatal(err)
+		MustOK(err)
+		if hash == oldhash {
+			log.Printf("Ingore same path and hash:%s,%s", relPath, hash)
+		} else {
+			stmt, err := o.db.Prepare("UPDATE files SET md5=?,size=?,modtime=? WHERE id=?")
+			MustOK(err)
+			_, err = stmt.Exec(hash, f.Size(), f.ModTime(), n)
+			MustOK(err)
+			o.decRef(oldhash)
+			o.copyFile(fullpath, hash)
 		}
 
 	}
@@ -215,8 +242,6 @@ func (o *Repo) AddDir() {
 			parentID := o.getFolderID(parentPath)
 
 			o.addFile(fullpath, hash, f, parentPath, parentID)
-
-			o.copyFile(fullpath, hash)
 
 			fmt.Println(hash, ",", parentPath, ",", f.Name(), ",", size)
 		}

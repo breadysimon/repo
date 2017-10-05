@@ -1,18 +1,12 @@
 package main
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 )
 
-func TestTest(t *testing.T) {
-	fmt.Print(time.Now().Format("20060102150405"))
-}
-
-func ATestRepoAdd(t *testing.T) {
+func TestRepoAdd(t *testing.T) {
 	workDir, _ := os.Getwd()
 	baseDir, _ := filepath.Abs("\\")
 	repo := &Repo{
