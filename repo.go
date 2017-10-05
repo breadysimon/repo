@@ -19,6 +19,7 @@ import (
 )
 
 /*
+CREATE DATABASE repo;
 DROP TABLE IF EXISTS files;
 CREATE TABLE `files` (
   `id` bigint(20) NOT NULL AUTO_INCREMENT,
