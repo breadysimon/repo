@@ -12,44 +12,45 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	//	"strings"
-	//	"time"
 
-	_ "github.com/go-sql-driver/mysql"
+	//_ "github.com/go-sql-driver/mysql"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 /*
+Mysql:
 CREATE DATABASE repo;
+
 DROP TABLE IF EXISTS files;
-CREATE TABLE `files` (
-  `id` bigint(20) NOT NULL AUTO_INCREMENT,
-  `md5` varchar(40) DEFAULT '',
-  `name` varchar(256) DEFAULT '',
-  `size` int(11) DEFAULT '0',
-  `modtime` varchar(20) DEFAULT '',
-  `folder` varchar(256) DEFAULT '',
-  `fullpath` varchar(512) DEFAULT '',
-  `folderid` bigint(20) DEFAULT '0',
-  PRIMARY KEY (`id`)
-) ENGINE=InnoDB AUTO_INCREMENT=9 DEFAULT CHARSET=utf8mb4
-;
 DROP TABLE IF EXISTS repo;
-CREATE TABLE `repo` (
-  `id` varchar(40) NOT NULL DEFAULT '',
-  `refcount` int(11) DEFAULT '0',
-  PRIMARY KEY (`id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-;
 DROP TABLE IF EXISTS folders;
-CREATE TABLE `folders` (
-  `id` bigint(20) NOT NULL AUTO_INCREMENT,
-  `md5` varchar(40) DEFAULT '',
-  `name` varchar(256) DEFAULT '',
-  `path` varchar(512) DEFAULT '',
-  `parent` bigint(20) DEFAULT '0',
-  PRIMARY KEY (`id`)
+
+CREATE TABLE IF NOT EXISTS files (
+  id bigint(20) NOT NULL AUTO_INCREMENT,
+  md5 varchar(40) DEFAULT '',
+  name varchar(256) DEFAULT '',
+  size int(11) DEFAULT '0',
+  modtime varchar(20) DEFAULT '',
+  folder varchar(256) DEFAULT '',
+  fullpath varchar(512) DEFAULT '',
+  folderid bigint(20) DEFAULT '0',
+  PRIMARY KEY (id)
 ) ENGINE=InnoDB AUTO_INCREMENT=9 DEFAULT CHARSET=utf8mb4
 
+CREATE TABLE IF NOT EXISTS repo (
+  id varchar(40) NOT NULL DEFAULT '',
+  refcount int(11) DEFAULT '0',
+  PRIMARY KEY (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+
+CREATE TABLE IF NOT EXISTS folders (
+  id bigint(20) NOT NULL AUTO_INCREMENT,
+  md5 varchar(40) DEFAULT '',
+  name varchar(256) DEFAULT '',
+  path varchar(512) DEFAULT '',
+  parent bigint(20) DEFAULT '0',
+  PRIMARY KEY (id)
+) ENGINE=InnoDB AUTO_INCREMENT=9 DEFAULT CHARSET=utf8mb4
 */
 
 func MustOK(err error) {
@@ -57,20 +58,15 @@ func MustOK(err error) {
 		log.Fatal(err)
 	}
 }
-func (o *Repo) hash(file string, size int64) string {
+func (o *Repo) hash(fullpath string, size int64) string {
 	var sum string
 	//t := time.Now()
 	md5hash := md5.New()
 
-	if size > 2*1024*1024*1024 {
-		md5hash.Write([]byte(file))
+	if size > 2<<30 { //大于2G不生成MD5,直接用size
 		sum = fmt.Sprintf("x%d", size)
-	}
-	if size <= 0 {
-		md5hash.Write([]byte(""))
-		sum = fmt.Sprintf("x%x", md5hash.Sum(nil))
 	} else {
-		f, err := os.Open(file)
+		f, err := os.Open(fullpath)
 		MustOK(err)
 
 		defer f.Close()
@@ -158,16 +154,31 @@ func (o *Repo) copyFile(path string, hash string) {
 		_, err = stmt.Exec(refcount+1, hash)
 		MustOK(err)
 	}
+	fmt.Printf("added [%s]%s", hash, path)
 }
 
+/*
+sqlite3:
+DROP TABLE IF EXISTS files;
+CREATE TABLE files (id INTEGER PRIMARY KEY AUTOINCREMENT, md5 varchar (40) DEFAULT '', name varchar (256) DEFAULT '', size int (11) DEFAULT '0', modtime varchar (20) DEFAULT '', folder varchar (256) DEFAULT '', fullpath varchar (512) DEFAULT '', folderid INTEGER DEFAULT '0');
+DROP TABLE IF EXISTS folders;
+CREATE TABLE folders (id INTEGER PRIMARY KEY AUTOINCREMENT, md5 varchar (40) DEFAULT '', name varchar (256) DEFAULT '', path varchar (512) DEFAULT '', parent INTEGER DEFAULT '0');
+DROP TABLE IF EXISTS repo;
+CREATE TABLE repo (id varchar (40) NOT NULL DEFAULT '', refcount int (11) DEFAULT '0', PRIMARY KEY (id));
+*/
 func (o *Repo) connectDB() {
 	var once sync.Once
 	once.Do(func() {
 		var err error
-		o.db, err = sql.Open("mysql", "root@tcp(127.0.0.1:3306)/test")
-		if err != nil {
-			log.Fatal(err)
-		}
+		//o.db, err = sql.Open("mysql", "root@tcp(127.0.0.1:3306)/repo")
+		o.db, err = sql.Open("sqlite3", "e:/repo.db")
+		MustOK(err)
+		o.db.Exec(`CREATE TABLE files (id INTEGER PRIMARY KEY AUTOINCREMENT, md5 varchar (40) DEFAULT '', name varchar (256) DEFAULT '', size int (11) DEFAULT '0', modtime varchar (20) DEFAULT '', folder varchar (256) DEFAULT '', fullpath varchar (512) DEFAULT '', folderid INTEGER DEFAULT '0');`)
+		MustOK(err)
+		o.db.Exec(`CREATE TABLE folders (id INTEGER PRIMARY KEY AUTOINCREMENT, md5 varchar (40) DEFAULT '', name varchar (256) DEFAULT '', path varchar (512) DEFAULT '', parent INTEGER DEFAULT '0');`)
+		MustOK(err)
+		o.db.Exec(`CREATE TABLE repo (id varchar (40) NOT NULL DEFAULT '', refcount int (11) DEFAULT '0', PRIMARY KEY (id));`)
+		MustOK(err)
 	})
 }
 func (o *Repo) Exit() {
@@ -242,8 +253,6 @@ func (o *Repo) AddDir() {
 			parentID := o.getFolderID(parentPath)
 
 			o.addFile(fullpath, hash, f, parentPath, parentID)
-
-			fmt.Println(hash, ",", parentPath, ",", f.Name(), ",", size)
 		}
 		return nil
 	})
@@ -314,7 +323,7 @@ func (o *Repo) RmDir() {
 
 	o.connectDB()
 
-	{ //因为文件可能有多重引用,不能直接删除
+	{
 		rows, err := o.db.Query("select md5,fullpath from files where folder like ?", pattern)
 		MustOK(err)
 		defer rows.Close()
@@ -322,8 +331,8 @@ func (o *Repo) RmDir() {
 
 		for rows.Next() {
 			MustOK(rows.Scan(&md5, &fullpath))
-			log.Printf("delte file md5=%s, path=%s", md5, fullpath)
-			o.removeFile(md5)
+			log.Printf("delete file md5=%s, path=%s", md5, fullpath)
+			o.removeFile(md5) //因为文件可能有多重引用,不能直接删除
 		}
 		MustOK(rows.Err())
 
@@ -354,7 +363,7 @@ func (o *Repo) CmpDir() {
 	o.connectDB()
 	reportFile := path.Join(o.WorkDir, "duplicates-found-report.txt")
 	os.Remove(reportFile)
-	rpt, err := os.Create(reportFile) //os.OpenFile(reportFile, os.O_CREATE|os.O_RDWR, 0666)
+	rpt, err := os.Create(reportFile)
 	MustOK(err)
 
 	defer rpt.Close()
@@ -394,15 +403,9 @@ type Repo struct {
 	db      *sql.DB
 }
 
-func (o *Repo) ListDir() {
+func (o *Repo) ListDir(folderid string) {
 	var parentID int64
-	if o.WorkDir == "\\" {
-		parentID = 0
-	} else {
-		parentID, _ = strconv.ParseInt(o.WorkDir, 10, 64)
-	}
-
-	fmt.Printf("List %s\n", o.WorkDir)
+	parentID, _ = strconv.ParseInt(folderid, 10, 64)
 
 	o.connectDB()
 	rows, err := o.db.Query("SELECT id ,name from folders where parent=?", parentID)

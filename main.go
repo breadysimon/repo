@@ -21,8 +21,8 @@ func main() {
 	rmdir := flag.Bool("d", false, "remove dir records before index.")
 	key := flag.String("s", "", "search file, keyword required.")
 	cmp := flag.Bool("c", false, "compare dir to find duplicated files")
-	loc := flag.String("l", "\\", "local dir baidu disk root")
-	lst := flag.Bool("r", false, "list folders and files")
+	loc := flag.String("b", "\\", "local dir baidu disk root")
+	lst := flag.String("l", "", "list folders and files, 0 for root dir")
 	flag.Parse()
 
 	wd := flag.Arg(0)
@@ -50,9 +50,11 @@ func main() {
 	case *cmp:
 		fmt.Printf("List of duplicates:\n")
 		x.CmpDir()
-	case *lst:
-		fmt.Printf("List files in %s:\n", x.WorkDir)
-		x.ListDir()
+	case *lst != "":
+		x.ListDir(*lst)
 	}
 	return
+}
+func main1() {
+	fmt.Print(2 << 30)
 }

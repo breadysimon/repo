@@ -19,13 +19,9 @@ func TestRepoAdd(t *testing.T) {
 
 	repo.AddDir()
 
-	repo.WorkDir = "\\"
-	repo.ListDir()
-	repo.WorkDir = "14"
-	repo.ListDir()
-	repo.WorkDir = "17"
-	repo.ListDir()
-	repo.WorkDir = "E:\\KuGou"
+	repo.ListDir("0")
+	repo.ListDir("14")
+	repo.ListDir("17")
 	repo.CmpDir()
 	repo.Search("7239")
 	repo.Search("8701324709")
