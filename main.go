@@ -6,9 +6,13 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	//"runtime/pprof"
 )
 
 func main() {
+	//	f, _ := os.Create("d:/perf")
+	//	pprof.StartCPUProfile(f)
+	//	defer pprof.StopCPUProfile()
 	logfile, err := os.Create("e:/repo/cli.log")
 	if err != nil {
 		log.Fatal(err)
@@ -23,6 +27,8 @@ func main() {
 	cmp := flag.Bool("c", false, "compare dir to find duplicated files")
 	loc := flag.String("b", "\\", "local dir baidu disk root")
 	lst := flag.String("l", "", "list folders and files, 0 for root dir")
+	ref := flag.Bool("r", false, "create reference files only")
+	init := flag.Bool("i", false, "init database")
 	flag.Parse()
 
 	wd := flag.Arg(0)
@@ -34,10 +40,14 @@ func main() {
 	x := &Repo{
 		WorkDir: wd,
 		BaseDir: basedir,
+		RefOnly: *ref,
 	}
 	defer x.Exit()
 
 	switch {
+	case *init:
+		fmt.Println("Init db")
+		x.Init()
 	case *add:
 		fmt.Printf("Add local dir '%s' to the repository.\n", x.WorkDir)
 		x.AddDir()
